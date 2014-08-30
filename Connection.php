@@ -1,40 +1,195 @@
 <?php
+
 /**
  * File Connection.php
  *
  * PHP version 5.4+
  *
  * @author    Christophe Latour <clatour@ibitux.com>
- * @copyright 2010-2014 Ibitux
- * @license   http://www.ibitux.com/license license
- * @link      http://www.ibitux.com
+ * @author    Philippe Gaultier <pgaultier@ibitux.com>
+ * @copyright 2010-2014 Sweelix
+ * @license   http://www.sweelix.net/license license
+ * @version   XXX
+ * @link      http://www.sweelix.net
  * @category  riak
  * @package   sweelix.yii2.riak
  */
 namespace sweelix\yii2\riak;
 
-use yii\base\Object;
+use yii\base\Component;
+use yii\base\InvalidConfigException;
+use Yii;
+use Exception;
+
 /**
  * Class Connection
  *
- * Commentaire
+ * This class allow use to connect to a riak database
  *
  * @author    Christophe Latour <clatour@ibitux.com>
- * @copyright 2010-2014 Iibtux
- * @license   http://www.ibtux.com/license license
+ * @author    Philippe Gaultier <pgaultier@ibitux.com>
+ * @copyright 2010-2014 Sweelix
+ * @license   http://www.sweelix.net/license license
  * @version   XXX
- * @link      http://www.ibitux.com
+ * @link      http://www.sweelix.net
  * @category  riak
- * @package   sweelix.yii2
+ * @package   sweelix.yii2.riak
  * @since     XXX
  */
-class Connection extends Object
+class Connection extends Component
 {
+
     /**
-     * @var riakBucket riak Bucket instanceÒ
+     * @event Event an event that is triggered after a DB connection is established
      */
-    public $riakBucket;
+    const EVENT_AFTER_OPEN = 'afterOpen';
 
+    /**
+     *
+     * @var string the Data Source Name, or DSN, contains the information required to connect to the riak server.
+     *      DSN was created to be the most similar to PDO ones
+     *      riak:dsn=http://host:8098
+     */
+    public $dsn;
 
+    /**
+     * @var Client the client system
+     */
+    public $client;
 
+    /**
+     *
+     * @var array client drivers
+     */
+    public $driverMap = array(
+        'riak' => 'sweelix\yii2\nosql\riak\Client'
+    );
+
+    /**
+     * Establishes a DB connection.
+     * It does nothing if a DB connection has already been established.
+     *
+     * @throws \Exception
+     * @throws \yii\base\InvalidConfigException
+     *
+     * @return void
+     * @since  XXX
+     */
+    public function open()
+    {
+        if ($this->client === null) {
+            if (empty($this->dsn)) {
+                throw new InvalidConfigException('Connection::dsn cannot be empty.');
+            }
+            $token = 'Opening NoSql connection: ' . $this->dsn;
+            try {
+                Yii::trace($token, __METHOD__);
+                Yii::beginProfile($token, __METHOD__);
+                $this->client = $this->createClientInstance();
+                $this->initConnection();
+                Yii::endProfile($token, __METHOD__);
+            } catch (Exception $e) {
+                Yii::endProfile($token, __METHOD__);
+                throw new Exception($e->getMessage()); // , $e->errorInfo, (int) $e->getCode(), $e);
+            }
+        }
+    }
+
+    /**
+     * Closes the currently active Riak connection.
+     * It does nothing if the connection is already closed.
+     *
+     * @return void
+     * @since  XXX
+     */
+    public function close()
+    {
+        if ($this->client !== null) {
+            Yii::trace('Closing NoSql connection: ' . $this->dsn, __METHOD__);
+            $this->client = null;
+        }
+    }
+
+    /**
+     * Returns a value indicating whether the DB connection is established.
+     *
+     * @return boolean whether the DB connection is established
+     * @since  XXX
+     */
+    public function getIsActive()
+    {
+        return $this->client !== null;
+    }
+
+    /**
+     * Creates the Riak client instance.
+     * This method is called by [[open]] to establish a DB connection.
+     * The default implementation will create a PHP PDO instance.
+     * You may override this method if the default PDO needs to be adapted for certain DBMS.
+     *
+     * @throws \yii\base\InvalidConfigException
+     *
+     * @return Client
+     * @since  XXX
+     */
+    protected function createClientInstance()
+    {
+        $matches = array();
+        if (preg_match('#(?P<driver>[^:]+):dsn=(?P<dsn>.*)#', $this->dsn, $matches) > 0) {
+
+            if (isset($this->driverMap[$matches['driver']]) === true) {
+                return Yii::createObject(array(
+                    'class' => $this->driverMap[$matches['driver']],
+                    'dsn' => $matches['dsn']
+                ));
+            } else {
+                throw new InvalidConfigException('Connection::dsn driver "' . $matches['driver'] . '"is invalid');
+            }
+        } else {
+            throw new InvalidConfigException('Connection::dsn is invalid');
+        }
+    }
+
+    /**
+     * Initializes the Riak connection.
+     * This method is invoked right after the Riak connection is established.
+     * It then triggers an [[EVENT_AFTER_OPEN]] event.
+     *
+     * @return void
+     * @since XXX
+     */
+    protected function initConnection()
+    {
+        $this->trigger(self::EVENT_AFTER_OPEN);
+    }
+
+    /**
+     * Create a new query builder
+     *
+     * @return QueryBuilder
+     * @since XXX
+     */
+    public function getQueryBuilder()
+    {
+        return new QueryBuilder($this);
+    }
+
+    /**
+     * Create a Command instance
+     *
+     * @param array $commandData
+     *            The setting array for command.
+     *
+     * @return Command
+     * @since XXX
+     */
+    public function createCommand($commandData = array())
+    {
+        $this->open();
+        $command = new Command(array(
+            'commandData' => $commandData,
+            'noSqlDb' => $this
+        ));
+        return $command;
+    }
 }
